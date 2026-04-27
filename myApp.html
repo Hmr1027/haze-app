@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>雾霾探测APP</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; font-family: "PingFang SC", "Helvetica Neue", sans-serif; background: #f0f4f8; }
+    .app { display: flex; flex-direction: column; min-height: 100vh; padding: 0.2rem 0.24rem 0.3rem; }
+    .header { display: flex; align-items: center; justify-content: space-between; padding: 0.24rem 0.28rem; background: white; border-radius: 0.2rem; box-shadow: 0 0.04rem 0.12rem rgba(0,0,0,0.05); margin-bottom: 0.2rem; }
+    .location-left { display: flex; align-items: center; gap: 0.12rem; }
+    .location-icon { width: 0.36rem; height: 0.36rem; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23007AFF'%3E%3Cpath d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z'/%3E%3C/svg%3E") no-repeat center/contain; }
+    .city-name { font-size: 0.32rem; font-weight: 600; color: #1e293b; }
+    .update-time { font-size: 0.22rem; color: #64748b; }
+    .card { background: white; border-radius: 0.2rem; padding: 0.28rem; box-shadow: 0 0.04rem 0.12rem rgba(0,0,0,0.05); margin-bottom: 0.2rem; }
+    .card-title { font-size: 0.26rem; font-weight: 600; color: #334155; margin-bottom: 0.16rem; border-left: 0.06rem solid #007AFF; padding-left: 0.16rem; }
+    .weather-row { display: flex; align-items: center; justify-content: space-between; }
+    .temperature { font-size: 0.8rem; font-weight: 700; color: #0f172a; line-height: 1; }
+    .weather-info { display: flex; flex-direction: column; align-items: flex-end; gap: 0.08rem; font-size: 0.26rem; color: #475569; }
+    .humidity { font-size: 0.24rem; color: #64748b; }
+    .aqi-number { font-size: 0.72rem; font-weight: 700; }
+    .aqi-label { font-size: 0.24rem; margin-left: 0.08rem; }
+    .aqi-detail { display: flex; justify-content: space-around; margin-top: 0.16rem; font-size: 0.24rem; color: #475569; }
+    .aqi-detail span { display: flex; flex-direction: column; align-items: center; }
+    .advice { margin-top: 0.12rem; font-size: 0.22rem; color: #ef4444; font-weight: 500; }
+    #chart-container { width: 100%; height: 3.8rem; }
+    .error { color: #ef4444; font-size: 0.24rem; text-align: center; margin-top: 0.1rem; }
+    .manual-area { display: flex; gap: 0.1rem; margin-bottom: 0.2rem; }
+    .manual-area input { flex: 1; padding: 0.15rem 0.2rem; border-radius: 0.15rem; border: 1px solid #ccc; font-size: 0.28rem; }
+    .manual-area button { padding: 0.15rem 0.4rem; border-radius: 0.15rem; background: #007AFF; color: white; border: none; font-size: 0.28rem; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="location-left">
+        <div class="location-icon"></div>
+        <span class="city-name" id="cityDisplay">正在定位...</span>
+      </div>
+      <span class="update-time" id="updateTime">--</span>
+    </header>
+
+    <div class="manual-area">
+      <input type="text" id="manualCity" placeholder="手动输入城市，如：北京">
+      <button onclick="searchByCity()">查询</button>
+    </div>
+
+    <section class="card" id="weatherCard" style="display:none;">
+      <div class="card-title">🌤️ 天气实况</div>
+      <div class="weather-row">
+        <div>
+          <div class="temperature" id="tempDisplay">--°</div>
+          <div class="humidity" id="humidityDisplay">湿度 --%</div>
+        </div>
+        <div class="weather-info">
+          <span id="weatherText">--</span>
+          <span id="windDisplay">--</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="aqiCard" style="display:none;">
+      <div class="card-title">🍃 空气质量 AQI</div>
+      <div>
+        <span class="aqi-number" id="aqiNumber">--</span>
+        <span class="aqi-label" id="aqiLevel">--</span>
+      </div>
+      <div class="aqi-detail">
+        <span>PM2.5 <strong id="pm25">--</strong></span>
+        <span>PM10 <strong id="pm10">--</strong></span>
+        <span>NO₂ <strong id="no2">--</strong></span>
+      </div>
+      <div class="advice" id="adviceText"></div>
+    </section>
+
+    <section class="card" id="chartCard">
+      <div class="card-title">📈 温湿度趋势（模拟历史数据）</div>
+      <div id="chart-container"></div>
+    </section>
+
+    <div class="error" id="errorMsg"></div>
+  </div>
+
+  <script>
+    (function() {
+      // ========== REM适配 ==========
+      function setRootFontSize() {
+        const designWidth = 375;
+        const baseSize = 100;
+        const scale = document.documentElement.clientWidth / designWidth;
+        document.documentElement.style.fontSize = (baseSize * scale) + 'px';
+      }
+      window.addEventListener('resize', setRootFontSize);
+      setRootFontSize();
+
+      // ========== DOM元素 ==========
+      const cityDisplay = document.getElementById('cityDisplay');
+      const updateTime = document.getElementById('updateTime');
+      const weatherCard = document.getElementById('weatherCard');
+      const aqiCard = document.getElementById('aqiCard');
+      const tempDisplay = document.getElementById('tempDisplay');
+      const humidityDisplay = document.getElementById('humidityDisplay');
+      const weatherText = document.getElementById('weatherText');
+      const windDisplay = document.getElementById('windDisplay');
+      const aqiNumber = document.getElementById('aqiNumber');
+      const aqiLevel = document.getElementById('aqiLevel');
+      const pm25 = document.getElementById('pm25');
+      const pm10 = document.getElementById('pm10');
+      const no2 = document.getElementById('no2');
+      const adviceText = document.getElementById('adviceText');
+      const errorMsg = document.getElementById('errorMsg');
+
+      function showError(t) { errorMsg.textContent = t; errorMsg.style.display = 'block'; }
+      function clearError() { errorMsg.textContent = ''; errorMsg.style.display = 'none'; }
+      function formatTime(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
+      function getAqiInfo(aqi) {
+        if (aqi <= 50) return { level: '优', color: '#00e400' };
+        if (aqi <= 100) return { level: '良', color: '#ffff00' };
+        if (aqi <= 150) return { level: '轻度污染', color: '#ff7e00' };
+        if (aqi <= 200) return { level: '中度污染', color: '#ff0000' };
+        if (aqi <= 300) return { level: '重度污染', color: '#99004c' };
+        return { level: '严重污染', color: '#7e0023' };
+      }
+
+      // ========== 定位：GPS → IP定位 ==========
+      function getPositionByGPS() {
+        return new Promise((resolve, reject) => {
+          if (!navigator.geolocation) return reject(new Error('不支持'));
+          navigator.geolocation.getCurrentPosition(
+            pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+            err => reject(err),
+            { enableHighAccuracy: false, timeout: 5000 }
+          );
+        });
+      }
+
+      async function getCityByIP() {
+        try {
+          const res = await fetch('https://ipapi.co/json/');
+          const data = await res.json();
+          if (data.city) return data.city;
+          throw new Error('No city');
+        } catch (e) {
+          const res2 = await fetch('https://ip-api.com/json/');
+          const data2 = await res2.json();
+          if (data2.city) return data2.city;
+          throw new Error('IP定位失败');
+        }
+      }
+
+      // 根据城市名获取经纬度（Open-Meteo 地理编码）
+      async function getCoordsByCity(cityName) {
+        const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityName)}&count=1&language=zh&format=json`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!data.results || data.results.length === 0) throw new Error('未找到城市');
+        const { latitude, longitude, name, country } = data.results[0];
+        return { lat: latitude, lon: longitude, name: name || cityName, country };
+      }
+
+      // 获取天气和空气质量 (Open-Meteo)
+      async function fetchWeatherAndAir(lat, lon) {
+        // 天气：温度、湿度、风速、天气代码
+        const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=relativehumidity_2m&forecast_days=1`;
+        const airUrl = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}&current=european_aqi,us_aqi,pm2_5,pm10,nitrogen_dioxide&forecast_days=1`;
+
+        const [wRes, aRes] = await Promise.all([fetch(weatherUrl), fetch(airUrl)]);
+        const wData = await wRes.json();
+        const aData = await aRes.json();
+
+        // 提取数据
+        const weather = wData.current_weather;
+        const humidityArr = wData.hourly.relativehumidity_2m;
+        const currentHour = new Date().getHours();
+        const humidity = humidityArr ? humidityArr[currentHour] : '--';
+
+        const air = aData.current || {};
+        // Open-Meteo 默认给出欧洲AQI或美国AQI，我们取US AQI以适配中国习惯
+        const aqi = air.us_aqi ?? air.european_aqi ?? '--';
+        return {
+          temp: weather.temperature,
+          windSpeed: weather.windspeed,
+          windDir: weather.winddirection,
+          weatherCode: weather.weathercode,
+          humidity,
+          aqi,
+          pm25: air.pm2_5 ?? '--',
+          pm10: air.pm10 ?? '--',
+          no2: air.nitrogen_dioxide ?? '--'
+        };
+      }
+
+      // 天气代码转文字 (WMO codes)
+      function weatherCodeToText(code) {
+        const map = { 0:'晴',1:'少云',2:'多云',3:'阴',45:'雾',48:'霜雾',51:'小毛毛雨',53:'毛毛雨',55:'大毛毛雨',61:'小雨',63:'中雨',65:'大雨',71:'小雪',73:'中雪',75:'大雪',80:'阵雨',95:'雷暴' };
+        return map[code] || '未知';
+      }
+
+      // 渲染页面
+      function render(city, data) {
+        cityDisplay.textContent = city;
+        updateTime.textContent = '更新 ' + formatTime(new Date());
+
+        tempDisplay.textContent = data.temp + '°';
+        humidityDisplay.textContent = '湿度 ' + data.humidity + '%';
+        weatherText.textContent = weatherCodeToText(data.weatherCode);
+        windDisplay.textContent = getWindDirection(data.windDir) + ' ' + data.windSpeed + 'km/h';
+        weatherCard.style.display = 'block';
+
+        const aqiVal = parseInt(data.aqi) || 0;
+        const aqiInfo = getAqiInfo(aqiVal);
+        aqiNumber.textContent = data.aqi;
+        aqiNumber.style.color = aqiInfo.color;
+        aqiLevel.textContent = aqiInfo.level;
+        aqiLevel.style.color = aqiInfo.color;
+        pm25.textContent = data.pm25;
+        pm10.textContent = data.pm10;
+        no2.textContent = data.no2;
+
+        let advice = '';
+        if (aqiVal <= 50) advice = '空气质量令人满意，基本无空气污染。';
+        else if (aqiVal <= 100) advice = '空气质量可接受，敏感人群减少户外运动。';
+        else if (aqiVal <= 150) advice = '轻度污染，敏感人群减少户外活动。';
+        else if (aqiVal <= 200) advice = '中度污染，避免长时间户外运动。';
+        else if (aqiVal <= 300) advice = '重度污染，尽量留在室内。';
+        else advice = '严重污染，不要外出。';
+        adviceText.textContent = advice;
+        aqiCard.style.display = 'block';
+
+        // 图表模拟数据（可后续接入小时预报）
+        renderChart();
+      }
+
+      function getWindDirection(deg) {
+        const dirs = ['北','东北','东','东南','南','西南','西','西北'];
+        const idx = Math.round(deg / 45) % 8;
+        return dirs[idx];
+      }
+
+      // 图表渲染（保持不变）
+      let chartInstance = null;
+      function renderChart() {
+        const container = document.getElementById('chart-container');
+        if (!container) return;
+        if (chartInstance) chartInstance.dispose();
+        chartInstance = echarts.init(container);
+        const hours = ['10:00','11:00','12:00','13:00','14:00','15:00','16:00'];
+        const temps = [18, 19, 20, 22, 21, 20, 19];
+        const humids = [65, 62, 60, 58, 60, 63, 66];
+        const option = {
+          tooltip: { trigger: 'axis' },
+          legend: { data: ['温度(℃)','湿度(%)'], top:5, textStyle:{fontSize:12} },
+          grid: { left:'3%', right:'4%', bottom:'3%', containLabel:true },
+          xAxis: { type:'category', boundaryGap:false, data:hours, axisLabel:{fontSize:10} },
+          yAxis: [
+            { type:'value', name:'温度', axisLabel:{formatter:'{value}℃',fontSize:10} },
+            { type:'value', name:'湿度', axisLabel:{formatter:'{value}%',fontSize:10} }
+          ],
+          series: [
+            { name:'温度(℃)', type:'line', data:temps, smooth:true, color:'#007AFF', symbol:'circle', symbolSize:6 },
+            { name:'湿度(%)', type:'line', yAxisIndex:1, data:humids, smooth:true, color:'#FF9500', symbol:'circle', symbolSize:6 }
+          ]
+        };
+        chartInstance.setOption(option);
+        window.addEventListener('resize', () => chartInstance?.resize());
+      }
+
+      // 主流程：自动定位
+      async function autoLocate() {
+        clearError();
+        try {
+          // 尝试GPS
+          let lat, lon;
+          try {
+            const pos = await getPositionByGPS();
+            lat = pos.lat; lon = pos.lon;
+          } catch (e) {
+            // GPS失败，用IP获取城市名再查坐标
+            const cityName = await getCityByIP();
+            const coords = await getCoordsByCity(cityName);
+            lat = coords.lat; lon = coords.lon;
+            document.getElementById('manualCity').value = cityName; // 回填输入框
+          }
+          const data = await fetchWeatherAndAir(lat, lon);
+          // 通过反向地理编码得到城市名（可选，这里直接用坐标城市）
+          const cityRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?latitude=${lat}&longitude=${lon}&count=1&language=zh`);
+          const cityData = await cityRes.json();
+          const city = cityData?.results?.[0]?.name || '当前位置';
+          render(city, data);
+        } catch (err) {
+          showError('定位失败：' + err.message + '  请手动输入城市');
+          localStorage.setItem('lastCity', '');
+        }
+      }
+
+      // 手动搜索
+      window.searchByCity = async function() {
+        const input = document.getElementById('manualCity').value.trim();
+        if (!input) return;
+        clearError();
+        try {
+          const coords = await getCoordsByCity(input);
+          const data = await fetchWeatherAndAir(coords.lat, coords.lon);
+          render(coords.name || input, data);
+          localStorage.setItem('lastCity', coords.name || input);
+        } catch (e) {
+          showError('查询失败：' + e.message);
+        }
+      };
+
+      // 启动
+      autoLocate();
+    })();
+  </script>
+</body>
+</html>
