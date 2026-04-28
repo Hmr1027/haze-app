@@ -18,23 +18,11 @@
         }
 
         /* 动态背景主题 */
-        body.sunny {background: radial-gradient(circle at 80% 15%, #fff9e6 0%, #ffedbc 20%, #4facfe 100%);
-            background-attachment: fixed;}
-        body.cloudy { background: linear-gradient(180deg, 
-        #fff5e6 0%,   /* 顶部的淡淡阳光暖意 */
-        #f0f4f8 40%,  /* 柔软的白云色 */
-        #a1c4fd 100%  /* 底部的天空蓝 */
-    );
-    background-attachment: fixed;}
-        body.cloudy::after {
-    content: "";
-    position: fixed;
-    top: 0; left: 0; width: 100%; height: 100%;
-    background: radial-gradient(ellipse at 20% 30%, rgba(255,255,255,0.8) 0%, transparent 50%);
-    pointer-events: none;
-    z-index: -1;
-}
-        body.rainy { background: linear-gradient(180deg, #485563 0%, #29323c 100%); }
+        body.sunny {background: radial-gradient(circle at 80% 15%, #fff9e6 0%, #ffedbc 20%, #4facfe 100%);background-attachment: fixed;}
+        body.cloudy { background: linear-gradient(180deg, #fff5e6 0%,  #f0f4f8 40%,  #a1c4fd 100%  );background-attachment: fixed;}
+        
+        body.rainy { background:  linear-gradient(180deg, #2c3e50 0%,    #4ca1af 100%  );background-attachment: fixed; }
+        
         body.snowy { background: linear-gradient(180deg, #e6e9f0 0%, #eef1f5 100%); }
 
         .container { width: 100%; padding: 0.3rem; }
