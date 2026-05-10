@@ -17,17 +17,13 @@
             background: #f0f4f8; 
         }
 
-        /* 动态背景主题 */
         body.sunny {background: radial-gradient(circle at 80% 15%, #fff9e6 0%, #ffedbc 20%, #4facfe 100%);background-attachment: fixed;}
         body.cloudy { background: linear-gradient(180deg, #fff5e6 0%,  #f0f4f8 40%,  #a1c4fd 100%  );background-attachment: fixed;}
-        
         body.rainy { background:  linear-gradient(180deg, #2c3e50 0%,    #4ca1af 100%  );background-attachment: fixed; }
-        
         body.snowy { background: linear-gradient(180deg, #e6e9f0 0%, #eef1f5 100%); }
 
         .container { width: 100%; padding: 0.3rem; }
 
-        /* 全屏卡片样式 */
         .card {
             background: var(--glass);
             backdrop-filter: blur(15px);
@@ -44,18 +40,20 @@
             border-left: 0.1rem solid #007AFF; padding-left: 0.2rem;
         }
 
-        /* 搜索框样式优化 */
-        .search-bar { display: flex; gap: 0.15rem; margin-bottom: 0.3rem; }
+        .search-bar { display: flex; gap: 0.15rem; margin-bottom: 0.3rem; flex-wrap: wrap; }
         .search-bar input { 
-            flex: 1; padding: 0.2rem; border-radius: 0.15rem; border: none; 
+            flex: 1; min-width: 0; padding: 0.2rem; border-radius: 0.15rem; border: none; 
             background: var(--glass); font-size: 0.28rem;
         }
-        .search-bar button { 
-            padding: 0 0.4rem; border-radius: 0.15rem; border: none;
+        .search-bar .btn { 
+            padding: 0.2rem 0.35rem; border-radius: 0.15rem; border: none;
             background: #007AFF; color: white; font-weight: bold;
+            font-size: 0.26rem; white-space: nowrap;
+        }
+        .search-bar .btn-locate {
+            background: #34c759;
         }
 
-        /* 污染物数字优化 */
         .pollutants-container {
             display: flex; justify-content: space-between;
             margin-top: 0.4rem; border-top: 1px solid rgba(0,0,0,0.08); padding-top: 0.3rem;
@@ -64,7 +62,6 @@
         .p-label { display: block; font-size: 0.24rem; color: #64748b; margin-bottom: 0.08rem; }
         .p-value { font-size: 0.36rem; font-weight: 800; color: #1e293b; }
 
-        /* 样式细节 */
         .temp-row { display: flex; justify-content: space-between; align-items: center; }
         .temp-big { font-size: 1rem; font-weight: 800; color: #1e293b; }
         .aqi-big { font-size: 0.9rem; font-weight: 800; }
@@ -81,9 +78,13 @@
         <p id="updateTime" style="opacity: 0.8; font-size: 0.26rem; margin-top: 0.1rem;">正在获取实时数据</p>
     </header>
 
-    <div class="search-bar">
-        <input type="text" id="cityInput" placeholder="输入城市名称（如：西安）">
-        <button onclick="handleSearch()">查询</button>
+    <div class="search-bar" style="flex-direction: column; align-items: stretch;">
+        <input type="text" id="qwhost" value="ka5egn47g4.re.qweatherapi.com" placeholder="API Host（勿含 https://）" style="width:100%; padding: 0.2rem; border-radius: 0.15rem; border: none; background: rgba(255,255,255,0.45); font-size: 0.24rem;">
+        <div style="display:flex; gap: 0.15rem; flex-wrap: wrap;">
+            <input type="text" id="cityInput" placeholder="输入城市名称（如：西安）">
+            <button type="button" class="btn btn-locate" onclick="handleLocate()">定位</button>
+            <button type="button" class="btn" onclick="handleSearch()">查询</button>
+        </div>
     </div>
 
     <section class="card">
@@ -131,10 +132,31 @@
 </div>
 
 <script>
-    
+    /**
+     * 和风凭据：Key 在「项目管理 → 凭据」；API Host 在「控制台 → 设置」。
+     * 文档要求使用专属 API Host + 请求头 X-QW-Api-Key；Geo 路径为 /geo/v2/city/lookup（不是 geoapi 上的 /v2/city/lookup）。
+     */
+    const QWEATHER_KEY = 'b99e2654397a4323b4196bc08a899c7d';
+    const QWEATHER_HOST_STORAGE = 'qweather_api_host';
+    /** 控制台「设置」中的 API Host（仅域名） */
+    const DEFAULT_API_HOST = 'ka5egn47g4.re.qweatherapi.com';
+
+    const CODE_HINT = {
+        '400': '请求参数错误，请检查城市名或经纬度格式。',
+        '401': 'Key 无效或未授权，请在控制台核对凭据。',
+        '402': '余额/额度不足或套餐不含该接口。',
+        '403': '无访问权限（常见：Host 与 Key 不属于同一项目）。',
+        '404': '未找到匹配城市。',
+        '429': '请求过于频繁，请稍后再试。'
+    };
+
+    function strCode(d) {
+        if (!d || d.code === undefined || d.code === null) return '';
+        return String(d.code);
+    }
+
     let myChart = null;
 
-    // 1. 基础适配
     function initRem() {
         const width = document.documentElement.clientWidth;
         document.documentElement.style.fontSize = (width / 7.5) + 'px';
@@ -142,100 +164,312 @@
     window.onresize = () => { initRem(); myChart && myChart.resize(); };
     initRem();
 
-    // 2. 数据获取逻辑 (Open-Meteo API)
-    async function fetchWeatherData(cityName = "西安") {
-        try {
-            // 地理编码
-            const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityName)}&count=1&language=zh`);
-            const geoData = await geoRes.json();
-            if (!geoData.results) return alert("未找到该城市");
-            const { latitude: lat, longitude: lon, name } = geoData.results[0];
+    function getApiHost() {
+        const input = document.getElementById('qwhost');
+        const fromInput = input && input.value.trim();
+        const fromStore = localStorage.getItem(QWEATHER_HOST_STORAGE) || '';
+        const raw = fromInput || fromStore || DEFAULT_API_HOST;
+        return raw.replace(/^https?:\/\//i, '').replace(/\/.*$/, '').trim();
+    }
 
-            // 并行获取天气和空气质量
-            const [wRes, aRes] = await Promise.all([
-                fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=temperature_2m,relativehumidity_2m`),
-                fetch(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}&current=us_aqi,pm2_5,pm10,nitrogen_dioxide`)
-            ]);
-
-            const weatherData = await wRes.json();
-            const airData = await aRes.json();
-
-            
-            updateVisualPart(name, weatherData, airData);
-        } catch (err) {
-            console.error("数据加载失败", err);
+    function persistApiHost() {
+        const input = document.getElementById('qwhost');
+        if (input && input.value.trim()) {
+            localStorage.setItem(QWEATHER_HOST_STORAGE, input.value.trim());
         }
     }
 
-    // 3. 视觉渲染调度中心
-    function updateVisualPart(name, w, a) {
-        const current = w.current_weather;
-        const air = a.current;
+    function apiUrl(path, params) {
+        const host = getApiHost();
+        const u = new URL(path, `https://${host}/`);
+        Object.entries(params).forEach(([k, v]) => {
+            if (v !== undefined && v !== null && v !== '') u.searchParams.set(k, String(v));
+        });
+        return u;
+    }
 
-        // 更新文字
+    async function qwFetchJson(path, params) {
+        const url = apiUrl(path, params);
+        let res;
+        try {
+            res = await fetch(url.toString(), {
+                method: 'GET',
+                headers: { 'X-QW-Api-Key': QWEATHER_KEY },
+                mode: 'cors'
+            });
+        } catch (e) {
+            throw new Error('网络请求失败（可能被浏览器拦截或需用 http(s) 页面打开，勿用离线 file://）。 ' + (e.message || ''));
+        }
+        const text = await res.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch {
+            throw new Error(`接口返回非 JSON（HTTP ${res.status}）。请确认 API Host 为控制台「设置」中的专属域名。`);
+        }
+        return { res, data, url: url.toString() };
+    }
+
+    function isLatLonQuery(q) {
+        return /^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/.test(String(q).trim());
+    }
+
+    async function geoLookup(locationQuery) {
+        const params = {
+            location: locationQuery,
+            number: 10,
+            lang: 'zh'
+        };
+        if (!isLatLonQuery(locationQuery)) {
+            params.range = 'cn';
+        }
+        const { data } = await qwFetchJson('/geo/v2/city/lookup', params);
+        const c = strCode(data);
+        if (c === '404' || !data.location || !data.location.length) {
+            return { ok: false, data, loc: null };
+        }
+        if (c !== '200') {
+            return { ok: false, data, loc: null };
+        }
+        return { ok: true, data, loc: data.location[0] };
+    }
+
+    function displayCityName(loc) {
+        if (!loc) return '';
+        const parts = [loc.adm2, loc.name].filter(Boolean);
+        return parts.join(' · ') || loc.name;
+    }
+
+    async function fetchByLocationId(loc) {
+        const id = loc.id;
+        const name = displayCityName(loc);
+
+        const [w, h] = await Promise.all([
+            qwFetchJson('/v7/weather/now', { location: id }),
+            qwFetchJson('/v7/weather/24h', { location: id })
+        ]);
+
+        const nowJson = w.data;
+        const hourlyJson = h.data;
+
+        if (strCode(nowJson) !== '200') {
+            const c = strCode(nowJson);
+            throw new Error(CODE_HINT[c] || ('天气数据获取失败: ' + (c || '')));
+        }
+        if (strCode(hourlyJson) !== '200') {
+            const c = strCode(hourlyJson);
+            throw new Error(CODE_HINT[c] || ('24小时预报获取失败: ' + (c || '')));
+        }
+
+        /** 新版空气质量：/airquality/v1/current/{lat}/{lon}（/v7/air/now 已弃用） */
+        let airPayload = null;
+        try {
+            const lat = Number(loc.lat).toFixed(2);
+            const lon = Number(loc.lon).toFixed(2);
+            const { data } = await qwFetchJson(`/airquality/v1/current/${lat}/${lon}`, { lang: 'zh' });
+            const ac = strCode(data);
+            if (ac && ac !== '200') {
+                airPayload = { _apiError: data };
+            } else {
+                airPayload = data;
+            }
+        } catch (e) {
+            console.warn('空气质量接口失败', e);
+            airPayload = { _fetchError: e.message || String(e) };
+        }
+
+        updateVisualPart(name, nowJson, hourlyJson, airPayload, loc);
+    }
+
+    async function fetchWeatherData(cityName) {
+        try {
+            document.getElementById('updateTime').innerText = '正在获取实时数据…';
+            persistApiHost();
+            const { loc, data } = await geoLookup(cityName);
+            if (!loc) {
+                const c = data ? strCode(data) : '';
+                alert(CODE_HINT[c] || (c ? ('城市查询失败：' + c) : '未找到该城市'));
+                return;
+            }
+            await fetchByLocationId(loc);
+        } catch (err) {
+            console.error(err);
+            alert(err.message || '数据加载失败');
+        }
+    }
+
+    async function fetchByCoords(longitude, latitude) {
+        const lon = Number(Number(longitude).toFixed(2));
+        const lat = Number(Number(latitude).toFixed(2));
+        const locQuery = `${lon},${lat}`;
+        document.getElementById('updateTime').innerText = '正在根据 GPS 匹配城市…';
+        persistApiHost();
+        const { loc, data } = await geoLookup(locQuery);
+        if (!loc) {
+            const c = data ? strCode(data) : '';
+            alert(CODE_HINT[c] || '无法根据当前位置匹配到城市，请检查 API Host 与 Key 是否同属一个项目，或尝试手动搜索。');
+            return;
+        }
+        await fetchByLocationId(loc);
+    }
+
+    function updateVisualPart(name, nowJson, hourlyJson, airJson, loc) {
+        const now = nowJson.now;
+        const hourly = hourlyJson.hourly || [];
+
         document.getElementById('cityDisplay').innerText = name;
-        document.getElementById('curTemp').innerText = Math.round(current.temperature);
-        document.getElementById('curHumid').innerText = w.hourly.relativehumidity_2m[new Date().getHours()];
-        document.getElementById('windInfo').innerText = `风速 ${current.windspeed} km/h`;
+        document.getElementById('curTemp').innerText = Math.round(Number(now.temp));
+        document.getElementById('curHumid').innerText = now.humidity;
+        document.getElementById('windInfo').innerText = `${now.windDir || ''} ${now.windScale || ''}级 · 风速 ${now.windSpeed || '--'} km/h`;
         document.getElementById('updateTime').innerText = `最后更新: ${new Date().toLocaleTimeString()}`;
 
-        // (1) 背景与状态切换
-        updateBackground(current.weathercode);
+        updateBackgroundFromIcon(now.icon);
+        document.getElementById('wText').innerText = now.text || '--';
 
-        // (2) AQI 与污染物显示 
-        updateAQISection(air);
-
-        // (3) 24小时图表
-        renderFullChart(w.hourly);
+        updateAQISection(airJson, loc);
+        renderFullChart(hourly);
     }
 
-    // 背景切换逻辑
-    function updateBackground(code) {
+    function updateBackgroundFromIcon(icon) {
         const body = document.body;
-        body.className = ''; 
-        let text = "☁️多云";
-
-        if (code === 0) { body.classList.add('sunny'); text = "☀️晴朗"; }
-        else if (code <= 3) { body.classList.add('cloudy'); text = "☁️多云"; }
-        else if (code >= 51 && code <= 67) { body.classList.add('rainy'); text = "🌧️有雨"; }
-        else if (code >= 71) { body.classList.add('snowy'); text = "❄️有雪"; }
-        else { body.classList.add('cloudy'); }
-        
-        document.getElementById('wText').innerText = text;
+        body.className = '';
+        const code = parseInt(icon, 10);
+        if ([100, 102, 150, 151].includes(code)) {
+            body.classList.add('sunny');
+        } else if (code >= 300 && code < 400) {
+            body.classList.add('rainy');
+        } else if (code >= 400 && code < 500) {
+            body.classList.add('snowy');
+        } else {
+            body.classList.add('cloudy');
+        }
     }
 
-    // AQI 区域更新
-    function updateAQISection(air) {
-        const aqi = Math.round(air.us_aqi);
+    function showAirEmpty(reason) {
+        const aqiVal = document.getElementById('aqiVal');
+        const aqiTag = document.getElementById('aqiTag');
+        const adviceText = document.getElementById('adviceText');
+        aqiVal.innerText = '--';
+        aqiVal.style.color = '#64748b';
+        aqiTag.innerText = '无数据';
+        aqiTag.style.cssText = 'background:#f1f5f9; color:#64748b';
+        document.getElementById('pm25').innerText = '--';
+        document.getElementById('pm10').innerText = '--';
+        document.getElementById('no2').innerText = '--';
+        adviceText.innerText = reason || '当前位置暂无空气质量数据。';
+    }
+
+    function pickAirIndex(indexes, loc) {
+        if (!indexes || !indexes.length) return null;
+        const country = (loc && loc.country) ? String(loc.country) : '';
+        if (country.includes('中国') || country === 'CN') {
+            const cn = indexes.find(i => i.code === 'cn-mee') || indexes.find(i => i.code === 'cn-mee-1h');
+            if (cn) return cn;
+        }
+        const us = indexes.find(i => i.code === 'us-epa' || i.code === 'us-epa-nc');
+        if (us) return us;
+        return indexes[0];
+    }
+
+    function pollutantConc(pollutants, code) {
+        const p = pollutants && pollutants.find(x => x.code === code);
+        if (!p || !p.concentration || p.concentration.value === undefined || p.concentration.value === null) return '--';
+        const v = Number(p.concentration.value);
+        if (!Number.isFinite(v)) return String(p.concentration.value);
+        return Math.abs(v) >= 100 ? String(Math.round(v)) : String(Math.round(v * 10) / 10);
+    }
+
+    function applyAqiStyle(aqiNum, category, aqiVal, aqiTag, adviceText, extraAdvice) {
+        const cat = category || '';
+        const fallback = (txt) => {
+            if (extraAdvice) adviceText.innerText = extraAdvice;
+            else adviceText.innerText = txt;
+        };
+        if (!Number.isFinite(aqiNum)) {
+            aqiVal.style.color = '#64748b';
+            aqiTag.innerText = cat || '—';
+            aqiTag.style.cssText = 'background:#f1f5f9; color:#64748b';
+            adviceText.innerText = extraAdvice || '请参考当地发布的空气质量信息。';
+            return;
+        }
+        if (aqiNum <= 50) {
+            aqiVal.style.color = '#10b981';
+            aqiTag.innerText = cat || '优';
+            aqiTag.style.cssText = 'background:#ecfdf5; color:#10b981';
+            fallback('空气很好，适合户外运动。');
+        } else if (aqiNum <= 100) {
+            aqiVal.style.color = '#f59e0b';
+            aqiTag.innerText = cat || '良';
+            aqiTag.style.cssText = 'background:#fffbeb; color:#f59e0b';
+            fallback('质量尚可，部分敏感人群注意。');
+        } else {
+            aqiVal.style.color = '#ef4444';
+            aqiTag.innerText = cat || '污染';
+            aqiTag.style.cssText = 'background:#fef2f2; color:#ef4444';
+            fallback('空气不佳，建议佩戴口罩，减少外出。');
+        }
+    }
+
+    function updateAQISection(airJson, loc) {
         const aqiVal = document.getElementById('aqiVal');
         const aqiTag = document.getElementById('aqiTag');
         const adviceText = document.getElementById('adviceText');
 
-        aqiVal.innerText = aqi;
-        document.getElementById('pm25').innerText = air.pm2_5;
-        document.getElementById('pm10').innerText = air.pm10;
-        document.getElementById('no2').innerText = air.nitrogen_dioxide;
-
-        if (aqi <= 50) {
-            aqiVal.style.color = "#10b981"; aqiTag.innerText = "优";
-            aqiTag.style.cssText = "background:#ecfdf5; color:#10b981";
-            adviceText.innerText = "空气很好，适合户外运动。";
-        } else if (aqi <= 100) {
-            aqiVal.style.color = "#f59e0b"; aqiTag.innerText = "良";
-            aqiTag.style.cssText = "background:#fffbeb; color:#f59e0b";
-            adviceText.innerText = "质量尚可，部分敏感人群注意。";
-        } else {
-            aqiVal.style.color = "#ef4444"; aqiTag.innerText = "污染";
-            aqiTag.style.cssText = "background:#fef2f2; color:#ef4444";
-            adviceText.innerText = "空气不佳，建议佩戴口罩，减少外出。";
+        if (airJson && airJson._fetchError) {
+            showAirEmpty('空气质量加载失败：' + airJson._fetchError);
+            return;
         }
+        if (airJson && airJson._apiError) {
+            const c = strCode(airJson._apiError);
+            showAirEmpty(CODE_HINT[c] || ('空气质量接口：' + (c || '错误')));
+            return;
+        }
+
+        if (airJson && Array.isArray(airJson.indexes) && airJson.indexes.length) {
+            const idx = pickAirIndex(airJson.indexes, loc);
+            const pollutants = airJson.pollutants || [];
+            const aqiNum = Number(idx.aqi);
+            const display = idx.aqiDisplay != null && idx.aqiDisplay !== '' ? String(idx.aqiDisplay) : (Number.isFinite(aqiNum) ? String(Math.round(aqiNum)) : '--');
+            aqiVal.innerText = display;
+
+            document.getElementById('pm25').innerText = pollutantConc(pollutants, 'pm2p5');
+            document.getElementById('pm10').innerText = pollutantConc(pollutants, 'pm10');
+            document.getElementById('no2').innerText = pollutantConc(pollutants, 'no2');
+
+            const effect = (idx.health && idx.health.effect) || '';
+            const g = idx.health && idx.health.advice && idx.health.advice.generalPopulation;
+            const s = idx.health && idx.health.advice && idx.health.advice.sensitivePopulation;
+            const merged = [effect, g, s].filter(Boolean).join(' ').trim();
+
+            applyAqiStyle(aqiNum, idx.category, aqiVal, aqiTag, adviceText, merged || null);
+            return;
+        }
+
+        if (airJson && strCode(airJson) === '200' && airJson.now) {
+            const air = airJson.now;
+            const aqi = Math.round(Number(air.aqi || 0));
+            aqiVal.innerText = Number.isFinite(aqi) ? aqi : '--';
+            document.getElementById('pm25').innerText = air.pm2p5 ?? '--';
+            document.getElementById('pm10').innerText = air.pm10 ?? '--';
+            document.getElementById('no2').innerText = air.no2 ?? '--';
+            applyAqiStyle(Number(air.aqi), air.category, aqiVal, aqiTag, adviceText, null);
+            return;
+        }
+
+        showAirEmpty('当前位置暂无空气质量数据（请确认控制台已开通「空气质量」服务）。');
     }
 
-    // 图表重绘逻辑
     function renderFullChart(hourly) {
         if (!myChart) myChart = echarts.init(document.getElementById('chart-main'));
-        
-        const hours = hourly.time.map(t => t.split('T')[1]);
+
+        const slice = hourly.slice(0, 24);
+        const hours = slice.map(h => {
+            const t = h.fxTime || '';
+            const part = t.includes('T') ? t.split('T')[1] : t;
+            return (part || '').slice(0, 5);
+        });
+        const temps = slice.map(h => Number(h.temp));
+        const hums = slice.map(h => Number(h.humidity));
 
         myChart.setOption({
             grid: { top: '15%', left: '10%', right: '10%', bottom: '15%' },
@@ -244,17 +478,17 @@
             xAxis: {
                 type: 'category',
                 boundaryGap: false,
-                data: hours.slice(0, 24),
+                data: hours,
                 axisLabel: { interval: 3, fontSize: 10, color: '#94a3b8' }
             },
             yAxis: [
                 { type: 'value', name: '°C', axisLabel: { fontSize: 10 } },
-                { type: 'value', name: '%', max: 100, axisLabel: { fontSize: 10 }, splitLine: {show: false} }
+                { type: 'value', name: '%', max: 100, axisLabel: { fontSize: 10 }, splitLine: { show: false } }
             ],
             series: [
                 {
                     name: '温度', type: 'line', smooth: true,
-                    data: hourly.temperature_2m.slice(0, 24),
+                    data: temps,
                     color: '#007AFF',
                     areaStyle: {
                         color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
@@ -265,7 +499,7 @@
                 },
                 {
                     name: '湿度', type: 'line', yAxisIndex: 1, smooth: true,
-                    data: hourly.relativehumidity_2m.slice(0, 24),
+                    data: hums,
                     color: '#f59e0b', lineStyle: { type: 'dashed', width: 2 }
                 }
             ]
@@ -273,13 +507,69 @@
     }
 
     function handleSearch() {
-        const val = document.getElementById('cityInput').value;
+        const val = document.getElementById('cityInput').value.trim();
         if (val) fetchWeatherData(val);
     }
 
-    // 初始加载
-    fetchWeatherData("西安");
+    function handleLocate() {
+        if (!navigator.geolocation) {
+            alert('当前浏览器不支持定位');
+            return;
+        }
+        document.getElementById('updateTime').innerText = '正在请求定位权限…';
+        navigator.geolocation.getCurrentPosition(
+            async (pos) => {
+                try {
+                    const { longitude, latitude } = pos.coords;
+                    await fetchByCoords(longitude, latitude);
+                } catch (e) {
+                    console.error(e);
+                    alert(e.message || '定位数据加载失败');
+                }
+            },
+            (err) => {
+                const map = {
+                    1: '您拒绝了定位权限，可在浏览器设置中开启后重试。',
+                    2: '暂时无法获取位置信息。',
+                    3: '定位超时，请重试。'
+                };
+                alert(map[err.code] || '定位失败');
+            },
+            { enableHighAccuracy: true, timeout: 15000, maximumAge: 300000 }
+        );
+    }
 
+    window.addEventListener('load', () => {
+        const hostInput = document.getElementById('qwhost');
+        if (hostInput) {
+            const saved = localStorage.getItem(QWEATHER_HOST_STORAGE);
+            if (saved) hostInput.value = saved;
+        }
+        document.getElementById('cityInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') handleSearch();
+        });
+
+        if (navigator.geolocation) {
+            document.getElementById('updateTime').innerText = '正在尝试定位当前城市…';
+            navigator.geolocation.getCurrentPosition(
+                async (pos) => {
+                    try {
+                        const { longitude, latitude } = pos.coords;
+                        await fetchByCoords(longitude, latitude);
+                    } catch (e) {
+                        console.warn('自动定位失败，改用默认城市', e);
+                        fetchWeatherData('西安');
+                    }
+                },
+                () => {
+                    fetchWeatherData('西安');
+                },
+                { enableHighAccuracy: false, timeout: 8000, maximumAge: 600000 }
+            );
+        } else {
+            fetchWeatherData('西安');
+        }
+    });
 </script>
 </body>
 </html>
